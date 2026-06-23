@@ -58,24 +58,46 @@ def roll(probability: float) -> bool:
     else:
         return False
 #calculate pulls from the sqlite latest message time
-last_message_minutes_time=720
-while True:
-    time.sleep(20*60)
-    chance=probability(last_message_minutes_time)
-    if roll(chance):
-        speak()
-        #some activation here and prompts etc for openfaust to use 
-        last_message_minutes_time=0
-    else:
-        last_message_minutes_time+=20
-    
-
-
-    
-    
-    
-
 def heartbeating(task_queue):
+    last_message_minutes_time=720
+    daily_limit=0
+    while True:
+        time.sleep(20*60)
+        heartbeat_time=os.getenv("HEARTBEAT_TIME_SECONDS")
+        heartbeat_time=int(heartbeat_time)
+        time.sleep(heartbeat_time)
+
+
+        #check if required time passed
+        restart_limit()
+
+
+        print("daily limit counter: ",daily_limit)
+        if check_limits(daily_limit)==0:
+            pass
+        else:
+            print("going to sleep")
+            continue
+
+        print("[Background] Running heartbeat...")
+        chance=probability(last_message_minutes_time)
+        if roll(chance):
+            print("Faust activated via heartbeat")
+            speak()
+            #some activation here and prompts etc for openfaust to use 
+            last_message_minutes_time=0
+            daily_limit+=1
+            task_queue.put("TRIGGER_WAKE")
+        else:
+            last_message_minutes_time+=20
+    
+
+
+    
+    
+    
+
+#def heartbeating(task_queue):
 
 
     #Runs in background every 30 minutes

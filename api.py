@@ -59,7 +59,6 @@ def generate_answer_call(messages: list, nickname: str = "",user_id: int=0,messa
 
     return response.choices[0].message.content
 
-
 def call_mistral(messagecontent: str, nickname: str = "Alex",user_id: int=0,bot_id=1,bot_name="",type=0):
     events=" "
     personality_path= Path(os.getenv("APP_PERSONALITY_PATH", "./data/personality.md"))
@@ -130,7 +129,6 @@ def call_mistral(messagecontent: str, nickname: str = "Alex",user_id: int=0,bot_
                      response with your name. {situational_prompt}"""}]
         history = context_call()
         messages.extend(history)
-        #here add personality
         
         return generate_answer_call(messages,nickname,user_id,messagecontent,bot_id,bot_name)
 

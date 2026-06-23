@@ -15,7 +15,7 @@ from api import call_mistral
 from save_messages import save_normal_message
 from kairos import decide
 from context import context_kairos
-from heartbeat import heartbeat
+from heartbeating import heartbeat
 
 
 
