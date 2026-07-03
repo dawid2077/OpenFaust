@@ -41,18 +41,18 @@ def generate_answer_call(messages: list, nickname: str = "",user_id: int=0,messa
                 }
             }
         )
-        
-    event=" "
-    response = client.chat.completions.create(
-        model="mistralai/mistral-small-2603",       
-        messages=messages,
-        extra_body={
-            "provider": {
-                "allow_fallbacks": True,
-                "order": ["mistral", "google","openai"]  
+    else:    
+        event=" "
+        response = client.chat.completions.create(
+            model="mistralai/mistral-small-2603",       
+            messages=messages,
+            extra_body={
+                "provider": {
+                    "allow_fallbacks": True,
+                    "order": ["mistral", "google","openai"]  
+                }
             }
-        }
-    )
+        )
     #save it to sqlite database
     data=response.model_dump_json()
     save(nickname, data,user_id,messagecontent,bot_id,bot_name)

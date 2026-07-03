@@ -26,7 +26,7 @@ except Exception as e:
     print(f"DEBUG: Could not load personality file: {e}")        
 
 
-
+#lmits for max times of heartbeast engaging
 def restart_limit():
     global RESET_ANCHOR
     now = datetime.now(timezone.utc)
