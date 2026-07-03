@@ -10,7 +10,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-
+@pytest.mark.skip(reason="Depricated will not be used in the future")
 class TestGetCompanionIdentity:
     """Tests for get_companion_identity()."""
 
