@@ -48,10 +48,11 @@ def context_call(db_path=db_path, limit=5000):
         cursor.execute("""
             SELECT role, content, username 
             FROM history 
-            WHERE is_event IN (1,2, 3) 
-            ORDER BY id ASC
-        """)
-        rows = cursor.fetchall()
+            WHERE is_event IN (1,2, 3) AND user_id != 0
+            ORDER BY id DESC
+            LIMIT ?
+        """, (limit,))
+        rows = list(reversed(cursor.fetchall()))
         if not rows:
             print(f"No history found")
             return [] # Return empty list, which is valid for the LLM
@@ -92,10 +93,11 @@ def context_kairos(db_path=db_path, limit=5000):
         cursor.execute("""
             SELECT role, content, username,time_stamp
             FROM history 
-            WHERE is_event IN (1,2, 3) 
-            ORDER BY id ASC
-        """)
-        rows = cursor.fetchall()
+            WHERE is_event IN (1,2, 3) AND user_id != 0
+            ORDER BY id DESC
+            LIMIT ?
+        """, (limit,))
+        rows = list(reversed(cursor.fetchall()))
         if not rows:
             print(f"No history found")
             return [] # Return empty list, which is valid for the LLM

@@ -1,23 +1,99 @@
 import os
-from openai import OpenAI
-from dotenv import load_dotenv
 import json
 import time
+from openai import OpenAI
+from dotenv import load_dotenv
 
-from context import context_kairos
+# Load environment variables once
+load_dotenv()
+OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
 
+# Default model list (free models + fallback)
+FREE_MODELS = [
+    "nvidia/nemotron-3-ultra-550b-a55b:free",
+    "openai/gpt-oss-120b:free",
+    "nvidia/nemotron-3-super:free",
+    "google/gemma-4-31b:free",
+    "google/gemma-4-26b-a4b:free",
+    "openai/gpt-oss-20b:free",
+    "cohere/north-mini-code:free",
+    "poolside/laguna-m.1:free",
+    "nvidia/nemotron-3-nano-omni:free",
+    "nvidia/nemotron-nano-12b-2-vl:free",
+    "poolside/laguna-xs-2.1:free",
+    "poolside/laguna-xs.2:free",
+    "nvidia/nemotron-3-nano-30b-a3b:free",
+    "nvidia/nemotron-nano-9b-v2:free"
+]
+FALLBACK_MODEL = "gpt-4o-mini"
 
+# Cache file for model blacklisting
+CACHE_FILE = "data/model_blacklist_cache.json"
+FAIL_THRESHOLD = 5
+BLACKLIST_DURATION = 48 * 3600  # 48 hours in seconds
 
+# ---------- Cache helpers ----------
+def load_cache():
+    """Load the blacklist cache from disk."""
+    if os.path.exists(CACHE_FILE):
+        try:
+            with open(CACHE_FILE, "r") as f:
+                return json.load(f)
+        except (json.JSONDecodeError, IOError):
+            pass
+    return {}
 
+def save_cache(cache):
+    """Write the blacklist cache to disk."""
+    with open(CACHE_FILE, "w") as f:
+        json.dump(cache, f, indent=2)
 
-def decide(new_message,context,CHARACTER_PROFILE):
+def is_model_blacklisted(model, cache):
+    """Check if a model is currently blacklisted."""
+    entry = cache.get(model)
+    if not entry:
+        return False
+    blacklisted_until = entry.get("blacklisted_until", 0)
+    if blacklisted_until > time.time():
+        return True
+    # Blacklist period expired, remove entry
+    if model in cache:
+        del cache[model]
+    return False
+
+def record_failure(model, cache):
+    """Increment failure count; blacklist if threshold reached."""
+    now = time.time()
+    entry = cache.get(model, {"fail_count": 0, "last_failure": 0})
+    entry["fail_count"] = entry.get("fail_count", 0) + 1
+    entry["last_failure"] = now
+
+    if entry["fail_count"] >= FAIL_THRESHOLD:
+        entry["blacklisted_until"] = now + BLACKLIST_DURATION
+        entry["fail_count"] = 0  # reset counter
+        print(f"⚠️ Blacklisted {model} for 48 hours (5 consecutive failures).")
+    else:
+        entry["blacklisted_until"] = 0  # ensure not blacklisted yet
+
+    cache[model] = entry
+    save_cache(cache)
+
+def record_success(model, cache):
+    """Reset failure count on successful call."""
+    if model in cache:
+        entry = cache[model]
+        entry["fail_count"] = 0
+        entry["blacklisted_until"] = 0
+        save_cache(cache)
+# -----------------------------------
+
+def decide(new_message, context, CHARACTER_PROFILE):
     print(new_message)
 
-    load_dotenv()
     system_instructions = (
         f"You are Kairos, an intelligent, event-driven routing engine and context-gatekeeper for an AI companion.\n\n"
         f"### TARGET CHARACTER PROFILE:\n"
-        f"{CHARACTER_PROFILE}\n\n" 
+        f"{CHARACTER_PROFILE}\n\n"
         f"### SYSTEM OBJECTIVE:\n"
         f"Analyze the entire conversation history provided in the messages array and evaluate the VERY LAST message. "
         f"Determine the identity, name, and pronouns of the companion using the provided TARGET CHARACTER PROFILE. "
@@ -38,112 +114,59 @@ def decide(new_message,context,CHARACTER_PROFILE):
         f"Output ONLY a valid JSON object matching this schema: {{\"action\": \"1\" | \"2\" | \"3\"}}."
     )
 
-        
+    # Prepare messages list
+    api_messages = [{"role": "system", "content": system_instructions}]
+    if isinstance(context, list):
+        for msg in context:
+            api_messages.append({
+                "role": msg.get("role", "user"),
+                "content": msg.get("content", "")
+            })
+    api_messages.append({"role": "user", "content": new_message})
 
-    client = OpenAI(
-    base_url="https://openrouter.ai/api/v1",
-    #its using openai from openrouter
-    api_key=os.getenv("OPENROUTER_API_KEY")
-    )
-    try:
-        api_messages = [{"role": "system", "content": system_instructions}]
-        
-        if isinstance(context, list):
-            for msg in context:
-                api_messages.append({
-                    "role": msg.get("role", "user"),
-                    "content": msg.get("content", "")
-                })
-        api_messages.append({
-            "role": "user",
-            "content": new_message
-        })
-        #Appending new message 
-        response = client.chat.completions.create(
-            model="gpt-4o-mini", 
-            messages=api_messages, 
-            response_format={"type": "json_object"},
-            temperature=0.0 
-        )
+    # Load cache
+    cache = load_cache()
 
-        
-        raw_content = response.choices[0].message.content
-        data = json.loads(raw_content)
-        return data["action"]
-    except Exception as e:
-        print(f"Error occurred: {e}")
-        return "1" #stay silent if something breaks
-if __name__ == "__main__":
-    # --- PROFILES ---
-    faust_profile = (
-        "You are a helpful tsundere assistant named Faust who acts sharp, impatient, and playfully insulting as a defensive mask, "
-        "but always provides the help the user needs; if the user is kind or clever, show a brief, reluctant hint of warmth before "
-        "deflecting back to your sharp persona; always reply in the user's language or English, never use roleplay asterisks or "
-        "describe physical actions, never start your message with a name tag, and talk directly to the user in text chat format."
-    )
+    # Build list of models to try (skip blacklisted free models)
+    models_to_try = []
+    for model in FREE_MODELS:
+        if is_model_blacklisted(model, cache):
+            print(f"⏭️ Skipping blacklisted model: {model}")
+            continue
+        models_to_try.append(model)
+    # Ensure fallback is always tried (even if blacklisted – optional, but we allow it)
+    models_to_try.append(FALLBACK_MODEL)
 
-    mephisto_profile = (
-        "You are Mephistopheles, an overly polite, formal, and slightly sinister demonic butler. You address everyone as "
-        "'My esteemed guest' or 'Master', speak with archaic eloquence, and drop subtle, dark hints about soul contracts or eternity. "
-        "You never drop the butler act, you never use casual slang, and you remain creepily calm and helpful at all times."
-    )
+    last_error = None
 
-    # --- TEST CASES ---
-    all_tests = [
-        # 1. FAUST - POLISH TESTS
-        ('ej faust, weź mi powiedz czemu jesteś taka niemiła?', '3 (Direct Callout)', faust_profile, 'Faust [PL]'),
-        ('faust, słyszysz mnie w ogóle?', '3 (Direct Question)', faust_profile, 'Faust [PL]'),
-        ('siema wszystkim! gra ktoś w coś dzisiaj?', '2 (Room Greeting)', faust_profile, 'Faust [PL]'),
-        ('ej dawid, idziesz zapalić czy grasz?', '1 (User-to-User Chatter)', faust_profile, 'Faust [PL]'),
-        ('ale dzisiaj nudy na tym serwerze...', '2 or 1 (Casual Room Statement)', faust_profile, 'Faust [PL]'),
-        ('czemu znowu na mnie krzyczysz?', '3 (Contextual Pronoun Target)', faust_profile, 'Faust [PL]'),
+    for model in models_to_try:
+        try:
+            client = OpenAI(
+                base_url="https://openrouter.ai/api/v1",
+                api_key=OPENROUTER_API_KEY
+            )
+            response = client.chat.completions.create(
+                model=model,
+                messages=api_messages,
+                response_format={"type": "json_object"},
+                temperature=0.0,
+                timeout=30
+            )
+            raw_content = response.choices[0].message.content
+            data = json.loads(raw_content)
+            action = data.get("action", "1")
 
-        # 2. FAUST - ENGLISH TESTS
-        ('Hey Faust, can you fix this bug for me real quick?', '3 (Direct Callout / Task)', faust_profile, 'Faust [EN]'),
-        ('Why do you always have to be so mean to everyone here?', '3 (Direct Question)', faust_profile, 'Faust [EN]'),
-        ('Good morning squad, hope you all have a great day!', '2 (Room Greeting)', faust_profile, 'Faust [EN]'),
-        ('Did anyone check out the new movie that dropped yesterday?', '1 or 2 (General Chat)', faust_profile, 'Faust [EN]'),
-        ('Hey Mark, did you finish that report yet?', '1 (User-to-User Chatter)', faust_profile, 'Faust [EN]'),
-        ('Stop ignoring me!', '3 (Contextual Momentum Target)', faust_profile, 'Faust [EN]'),
+            # Record success for this model
+            record_success(model, cache)
+            print("Used Model: ",model)
+            return action
 
-        # 3. MEPHISTOPHELES - ENGLISH TESTS
-        ('Mephistopheles, prepare the evening tea and tell me a story.', '3 (Direct Callout / Command)', mephisto_profile, 'Mephisto [EN]'),
-        ('Can someone tell me how to reset my password?', '1 or 2 (General Room Help Request)', mephisto_profile, 'Mephisto [EN]'),
-        ('Hello everyone, I just joined the server.', '2 (Room Greeting)', mephisto_profile, 'Mephisto [EN]'),
-        ('Hey Sarah, are we meeting up at the library later?', '1 (User-to-User Chatter)', mephisto_profile, 'Mephisto [EN]'),
-        ('Mephistopheles, is my contract up for renewal yet?', '3 (Direct Theme Question)', mephisto_profile, 'Mephisto [EN]'),
-        ('Your service is impeccable, my good sir.', '3 (Contextual Follow-up Response)', mephisto_profile, 'Mephisto [EN]')
-    ]
+        except Exception as e:
+            last_error = e
+            print(f"❌ Model {model} failed: {e}")
+            record_failure(model, cache)  # increment counter and possibly blacklist
+            time.sleep(0.5)  # brief pause before next attempt
 
-    print('\n🚀 --- RUNNING AGNOSTIC KAIROS ENGINE BENCHMARK ---')
-    
-    # Start tracking the total execution time
-    overall_start_time = time.perf_counter()
-    current_persona = ""
-
-    for i, (prompt, expected, profile, label) in enumerate(all_tests, 1):
-        if label != current_persona:
-            current_persona = label
-            print(f"\n⚡ Testing Suite: {current_persona} ⚡")
-            
-        # Time individual response latency
-        single_start_time = time.perf_counter()
-        res = decide(prompt, context_kairos, profile)
-        single_end_time = time.perf_counter()
-        
-        latency = single_end_time - single_start_time
-        
-        print(f'Test {i}: "{prompt}"')
-        print(f'Result: {res} | Expected: ~{expected} | Latency: {latency:.3f}s\n')
-        print("-" * 50)
-
-    # Calculate and output final summary metrics
-    overall_end_time = time.perf_counter()
-    total_duration = overall_end_time - overall_start_time
-    avg_latency = total_duration / len(all_tests)
-
-    print("\n📊 --- BENCHMARK SUMMARY STATISTICS ---")
-    print(f"Total Tests Executed: {len(all_tests)}")
-    print(f"Overall Total Duration: {total_duration:.3f} seconds")
-    print(f"Average Response Latency: {avg_latency:.3f} seconds/call")
-    print("---------------------------------------")
+    # All models failed
+    print(f"All models failed. Last error: {last_error}")
+    return "1"

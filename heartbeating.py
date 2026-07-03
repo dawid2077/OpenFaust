@@ -4,11 +4,11 @@ import random
 from pathlib import Path
 from datetime import datetime, timedelta,timezone
 from multiprocessing import Process
-
 from dotenv import load_dotenv
 
 from kairos import decide
 from context import context_kairos
+from context import context_call
 
 
 load_dotenv(dotenv_path="./data/config.conf")
@@ -59,10 +59,10 @@ def roll(probability: float) -> bool:
         return False
 #calculate pulls from the sqlite latest message time
 def heartbeating(task_queue):
+    #delete this before release
     last_message_minutes_time=720
     daily_limit=0
     while True:
-        time.sleep(20*60)
         heartbeat_time=os.getenv("HEARTBEAT_TIME_SECONDS")
         heartbeat_time=int(heartbeat_time)
         time.sleep(heartbeat_time)
@@ -79,18 +79,25 @@ def heartbeating(task_queue):
             print("going to sleep")
             continue
 
+        #If last message is by assistant
+
+        row=context_call(limit=1)
+        if row[0]['role'] == "assistant":
+            print("Last message by assistant going to sleep")
+            continue
+        else:
+            pass
+
         print("[Background] Running heartbeat...")
         chance=probability(last_message_minutes_time)
         if roll(chance):
-            print("Faust activated via heartbeat")
-            speak()
             #some activation here and prompts etc for openfaust to use 
             last_message_minutes_time=0
             daily_limit+=1
             task_queue.put("TRIGGER_WAKE")
+            print("Faust activated via heartbeat")
         else:
             last_message_minutes_time+=20
-    
 
 
     
