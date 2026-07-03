@@ -110,13 +110,9 @@ async def on_message(message):
     if client.user in message.mentions:
         #make the question prettier 
         message.content=message.content.split(">")[-1].strip()
-        if not message.content.strip():
-            print(message.content)
-            await message.reply("Wrap it up buddy ")
-        else:
-            response = call_mistral(message.content, nickname, user_id,bot_id,bot_name)
-            for chunk in split_message(response):
-                await message.reply(chunk)
+        response = call_mistral(message.content, nickname, user_id,bot_id,bot_name)
+        for chunk in split_message(response):
+            await message.reply(chunk)
     else:
         message.content=message.content.split(">")[-1].strip()
         save_normal_message(message.content,nickname, user_id)
