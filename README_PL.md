@@ -60,11 +60,11 @@ APP_DATA_PATH=/app/data
 APP_PERSONALITY_PATH=/app/data/personality.md
 ```
 
-### 3. Konfiguracja (`data/config.txt`)
-OpenFaust czyta ustawienia uruchomieniowe z pliku `data/config.txt`. Skopiuj `data/config.txt.example` do `data/config.txt` i dostosuj według potrzeb:
+### 3. Konfiguracja (`data/config.conf`)
+OpenFaust czyta ustawienia uruchomieniowe z pliku `data/config.conf`. Skopiuj `data/config.conf.example` do `data/config.conf` i dostosuj według potrzeb:
 
 ```bash
-cp data/config.txt.example data/config.txt
+cp data/config.conf.example data/config.conf
 ```
 
 Ustawienia domyślne:

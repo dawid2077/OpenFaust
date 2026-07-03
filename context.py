@@ -5,7 +5,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 from identity_get import get_companion_identity
 
-load_dotenv(dotenv_path="./data/config.txt")
+load_dotenv(dotenv_path="./data/config.conf")
 
 CONTEXT_LIMIT = int(os.getenv("CONTEXT_LIMIT", "5000"))
 

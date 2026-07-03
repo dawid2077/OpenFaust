@@ -59,11 +59,11 @@ APP_DATA_PATH=/app/data
 APP_PERSONALITY_PATH=/app/data/personality.md
 ```
 
-### 3. Configuration (`data/config.txt`)
-OpenFaust reads its runtime settings from `data/config.txt`. Copy `data/config.txt.example` to `data/config.txt` and adjust as needed:
+### 3. Configuration (`data/config.conf`)
+OpenFaust reads its runtime settings from `data/config.conf`. Copy `data/config.conf.example` to `data/config.conf` and adjust as needed:
 
 ```bash
-cp data/config.txt.example data/config.txt
+cp data/config.conf.example data/config.conf
 ```
 
 Default settings:
