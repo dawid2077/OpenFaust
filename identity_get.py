@@ -17,7 +17,17 @@ if not API_KEY:
 FREE_MODELS = [
     "nvidia/nemotron-3-ultra-550b-a55b:free",
     "openai/gpt-oss-120b:free",
-    # ... (rest of your list) ...
+    "nvidia/nemotron-3-super:free",
+    "google/gemma-4-31b:free",
+    "google/gemma-4-26b-a4b:free",
+    "openai/gpt-oss-20b:free",
+    "cohere/north-mini-code:free",
+    "poolside/laguna-m.1:free",
+    "nvidia/nemotron-3-nano-omni:free",
+    "nvidia/nemotron-nano-12b-2-vl:free",
+    "poolside/laguna-xs-2.1:free",
+    "poolside/laguna-xs.2:free",
+    "nvidia/nemotron-3-nano-30b-a3b:free",
     "nvidia/nemotron-nano-9b-v2:free"
 ]
 
