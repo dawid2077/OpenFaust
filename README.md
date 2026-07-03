@@ -78,7 +78,7 @@ CONTEXT_LIMIT=5000
 
 | Setting | Default | Description |
 |---------|---------|-------------|
-| `DAILY_LIMIT_MAX` | `2` | Max number of messages a user can send before hitting the rate limit |
+| `DAILY_LIMIT_MAX` | `5` | Max number of messages a user can send before hitting the rate limit |
 | `DAYS_AFTER_LIMIT_RESETS` | `1` | Days until the rate limit resets |
 | `MESSAGES_BY_USER_LIMIT` | `40` | Max direct @mentions per user per day |
 | `HEARTBEAT_TIME_SECONDS` | `1200` | Interval (seconds) between heartbeat loop checks |
