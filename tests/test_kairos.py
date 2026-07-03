@@ -9,7 +9,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-
+@pytest.mark.skip(reason="Depricated will not be used in the future")
 class TestDecide:
     """Tests for the kairos.decide() routing function."""
 

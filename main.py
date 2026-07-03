@@ -15,7 +15,8 @@ from api import call_mistral
 from save_messages import save_normal_message
 from kairos import decide
 from context import context_kairos
-from heartbeat import heartbeat
+from heartbeating import heartbeating
+
 
 
 
@@ -57,8 +58,9 @@ async def check_heartbeat_queue():
     if trigger =="TRIGGER_WAKE":
         print("firing faust")
         channel=client.get_channel(active_channel_id)
+        print(channel)
         if channel:
-            response = call_mistral("", "", client.user.id, client.user.name,1)
+            response = call_mistral("", "", 0,client.user.id ,client.user.name,2)
             for chunk in split_message(response):
                 await channel.send(chunk)
 
@@ -146,7 +148,7 @@ async def on_message(message):
 
 communication_queue = Queue()
 # runs the script
-bg_process = Process(target=heartbeat,args=(communication_queue,), daemon=True)
+bg_process = Process(target=heartbeating,args=(communication_queue,), daemon=True)
 bg_process.start()
 
 client.run(os.getenv("DISCORD_TOKEN"))

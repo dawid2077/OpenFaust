@@ -12,3 +12,5 @@ tests/__pycache__/
 .venv/
 .pytest_cache
 data/config.txt
+data/config.conf
+model_blacklist_cache.json
