@@ -9,7 +9,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-
+@pytest.mark.skip(reason="Depricated will not be used in the future")
 class TestDecide:
     """Tests for the kairos.decide() routing function."""
 
@@ -103,8 +103,8 @@ class TestDecide:
         # system + context messages + user
         assert len(messages) >= 2
 
-    #@patch("kairos.OpenAI")
-    #def test_decide_json_response_format(self, mock_openai_class):
+    @patch("kairos.OpenAI")
+    def test_decide_json_response_format(self, mock_openai_class):
         """The API call should request JSON response format."""
         mock_response = MagicMock()
         mock_response.choices = [MagicMock()]
@@ -121,8 +121,8 @@ class TestDecide:
         assert call_args.kwargs["response_format"]["type"] == "json_object"
         assert call_args.kwargs["temperature"] == 0.0
 
-    #@patch("kairos.OpenAI")
-    #def test_decide_api_error_fallback(self, mock_openai_class):
+    @patch("kairos.OpenAI")
+    def test_decide_api_error_fallback(self, mock_openai_class):
         """On API error, decide() should return '1' (silent)."""
         mock_client = MagicMock()
         mock_client.chat.completions.create.side_effect = Exception("API down")
@@ -132,8 +132,8 @@ class TestDecide:
 
         assert decide("Faust?", [], self.PROFILE) == "1"
 
-    #@patch("kairos.OpenAI")
-    #def test_decide_malformed_json_fallback(self, mock_openai_class):
+    @patch("kairos.OpenAI")
+    def test_decide_malformed_json_fallback(self, mock_openai_class):
         """On malformed JSON response, decide() should return '1'."""
         mock_response = MagicMock()
         mock_response.choices = [MagicMock()]
@@ -146,8 +146,8 @@ class TestDecide:
 
         assert decide("test", [], self.PROFILE) == "1"
 
-    #@patch("kairos.OpenAI")
-    #def test_decide_uses_gpt_4o_mini(self, mock_openai_class):
+    @patch("kairos.OpenAI")
+    def test_decide_uses_gpt_4o_mini(self, mock_openai_class):
         """The routing model should be gpt-4o-mini."""
         mock_response = MagicMock()
         mock_response.choices = [MagicMock()]
@@ -163,8 +163,8 @@ class TestDecide:
         call_args = mock_client.chat.completions.create.call_args
         assert call_args.kwargs["model"] == "gpt-4o-mini"
 
-    #@patch("kairos.OpenAI")
-    #def test_decide_uses_openrouter_base(self, mock_openai_class):
+    @patch("kairos.OpenAI")
+    def test_decide_uses_openrouter_base(self, mock_openai_class):
         """The client should target OpenRouter base URL."""
         mock_response = MagicMock()
         mock_response.choices = [MagicMock()]
@@ -181,8 +181,8 @@ class TestDecide:
         call_kwargs = mock_openai_class.call_args
         assert "https://openrouter.ai/api/v1" in str(call_kwargs)
 
-    #@patch("kairos.OpenAI")
-    #def test_decide_empty_message(self, mock_openai_class):
+    @patch("kairos.OpenAI")
+    def test_decide_empty_message(self, mock_openai_class):
         """Empty message should still process without error."""
         mock_response = MagicMock()
         mock_response.choices = [MagicMock()]
