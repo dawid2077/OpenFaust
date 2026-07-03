@@ -61,6 +61,7 @@ def roll(probability: float) -> bool:
 def heartbeating(task_queue):
     #delete this before release
     #last_message_minutes_time=720
+    last_message_minutes_time=0
     daily_limit=0
     while True:
         heartbeat_time=os.getenv("HEARTBEAT_TIME_SECONDS")
