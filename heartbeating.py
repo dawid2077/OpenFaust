@@ -31,12 +31,13 @@ def restart_limit():
     global RESET_ANCHOR
     now = datetime.now(timezone.utc)
     
-    days_after_limit_resets=os.getenv("DAYS_AFTER_LIMIT_RESETS")
-    days_after_limit_resets=int(days_after_limit_resets)
+    days_after_limit_resets = os.getenv("DAYS_AFTER_LIMIT_RESETS")
+    days_after_limit_resets = int(days_after_limit_resets)
+    
     if now - RESET_ANCHOR >= timedelta(days_after_limit_resets):
         RESET_ANCHOR = now  
-        global daily_limit
-        daily_limit=0
+        return True # Signal that it's time to reset
+    return False
 
 def check_limits(daily_limit):
     daily_limit_max=os.getenv("DAILY_LIMIT_MAX")
@@ -70,8 +71,9 @@ def heartbeating(task_queue):
 
 
         #check if required time passed
-        restart_limit()
-
+        if restart_limit():
+            daily_limit = 0
+            print("Daily limit has been reset.")
 
         print("daily limit counter: ",daily_limit)
         if check_limits(daily_limit)==0:
@@ -104,74 +106,6 @@ def heartbeating(task_queue):
     
     
     
-
-#def heartbeating(task_queue):
-
-
-    #Runs in background every 30 minutes
-    daily_limit=0
-    while True:
-        heartbeat_time=os.getenv("HEARTBEAT_TIME_SECONDS")
-        heartbeat_time=int(heartbeat_time)
-        time.sleep(heartbeat_time)
-        print("[Background] Running heartbeat...")
-
-
-        #check if the required time was passed
-        restart_limit()
-
-
-        print("daily limit counter: ",daily_limit)
-        if check_limits(daily_limit)==0:
-            pass
-        else:
-            print("going to sleep")
-            continue
-        
-        #logic
-        kairos_instruction = (
-            f"You are Kairos, an intelligent, event-driven routing engine and context-gatekeeper for an AI companion.\n\n"
-            f"### TARGET CHARACTER PROFILE:\n"
-            f"{CHARACTER_PROFILE}\n\n"
-            f"Your current task is an autonomous BACKGROUND HEARTBEAT CHECK because the channel has gone silent. "
-            f"Review the recent chat history and determine if it fits this specific character's personality profile "
-            f"to spontaneously break the silence and engage with the room.\n\n"
-            f"### CONTEXT EVALUATION RULES:\n"
-            f"1. Action '1' (STAY SILENT):\n"
-            f"   - If the ongoing message exchange is fresh and you could add something to it"
-            f"   - If the previous conversation ended naturally or wrapped up conclusively.\n"
-            f"   - If the last few messages cover topics that this specific character profile would find uninteresting, "
-            f"   - If someone asked a question or wanted an answer but no one responed to that person"
-            f"irrelevant, or out-of-character to comment on.\n"
-            f"2. Action '3' (ENGAGE / POKE USER):\n"
-            f"   - If the conversation was cut off mid-thought, or left hanging on an open topic that aligns directly "
-            f"with the character's interests, traits, or expertise.\n"
-            f"   - If there is a topic left unaddressed that this character would highly desire to react to, critique, "
-            f"joke about, or dive into based on their profile.\n"
-            f"### OUTPUT FORMAT:\n"
-            f"Respond ONLY with a valid JSON object. No markdown code blocks, no extra text.\n"
-            f"{{\n"
-            f"  'action': '1'\n"
-            f"}}\n"
-            f"OR\n"
-            f"{{\n"
-            f"  'action': '3'\n"
-            f"}}"
-        )
-        decision =decide("",context_kairos(db_path,"10"),kairos_instruction)
-        print("heartbeat decision", decision)
-        if decision == "0":
-            pass
-        elif decision =="1":
-            pass
-        elif decision =="3":
-            #call_main
-            task_queue.put("TRIGGER_WAKE")
-            daily_limit+=1
-        else:
-            print("Kairos error in heartbeat ")
-        decision=0
-
 
 
 
