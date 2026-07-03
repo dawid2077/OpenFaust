@@ -2,7 +2,12 @@ import sqlite3
 import os
 from datetime import datetime,timezone
 from pathlib import Path
+from dotenv import load_dotenv
 from identity_get import get_companion_identity
+
+load_dotenv(dotenv_path="./data/config.txt")
+
+CONTEXT_LIMIT = int(os.getenv("CONTEXT_LIMIT", "5000"))
 
 db_folder=os.getenv("APP_DATA_PATH", "./data/")
 db_path = os.path.join(db_folder, "data.db")
@@ -34,7 +39,7 @@ def message_time(iso_timestamp):
 
 
 
-def context_call(db_path=db_path, limit=5000):
+def context_call(db_path=db_path, limit=CONTEXT_LIMIT):
 
     formatted_messages = []
     
@@ -80,7 +85,7 @@ def context_call(db_path=db_path, limit=5000):
 
 #CHAN
 
-def context_kairos(db_path=db_path, limit=5000):
+def context_kairos(db_path=db_path, limit=CONTEXT_LIMIT):
     formatted_messages = []
     
     try:
