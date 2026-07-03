@@ -70,19 +70,19 @@ cp data/config.conf.example data/config.conf
 Ustawienia domyślne:
 
 ```
-DAILY_LIMIT_MAX=2
+DAILY_LIMIT_MAX=5
 DAYS_AFTER_LIMIT_RESETS=1
 MESSAGES_BY_USER_LIMIT=40
-HEARTBEAT_TIME_SECONDS=15
+HEARTBEAT_TIME_SECONDS=1200
 CONTEXT_LIMIT=5000
 ```
 
 | Ustawienie | Domyślnie | Opis |
 |------------|-----------|------|
-| `DAILY_LIMIT_MAX` | `2` | Maksymalna liczba wiadomości użytkownika przed limitem |
+| `DAILY_LIMIT_MAX` | `5` | Maksymalna liczba wiadomości użytkownika przed limitem |
 | `DAYS_AFTER_LIMIT_RESETS` | `1` | Dni do resetu limitu |
 | `MESSAGES_BY_USER_LIMIT` | `40` | Maksymalna liczba @wzmianek na użytkownika dziennie |
-| `HEARTBEAT_TIME_SECONDS` | `15` | Interwał (sekundy) między sprawdzeniami pętli heartbeat |
+| `HEARTBEAT_TIME_SECONDS` | `1200` | Interwał (sekundy) między sprawdzeniami pętli heartbeat |
 | `CONTEXT_LIMIT` | `5000` | Maksymalna liczba ostatnich wiadomości pobieranych z SQLite dla kontekstu |
 
 ### 4. Konfiguracja Docker Compose

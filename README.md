@@ -69,10 +69,10 @@ cp data/config.conf.example data/config.conf
 Default settings:
 
 ```
-DAILY_LIMIT_MAX=2
+DAILY_LIMIT_MAX=5
 DAYS_AFTER_LIMIT_RESETS=1
 MESSAGES_BY_USER_LIMIT=40
-HEARTBEAT_TIME_SECONDS=15
+HEARTBEAT_TIME_SECONDS=1200
 CONTEXT_LIMIT=5000
 ```
 
@@ -81,7 +81,7 @@ CONTEXT_LIMIT=5000
 | `DAILY_LIMIT_MAX` | `2` | Max number of messages a user can send before hitting the rate limit |
 | `DAYS_AFTER_LIMIT_RESETS` | `1` | Days until the rate limit resets |
 | `MESSAGES_BY_USER_LIMIT` | `40` | Max direct @mentions per user per day |
-| `HEARTBEAT_TIME_SECONDS` | `15` | Interval (seconds) between heartbeat loop checks |
+| `HEARTBEAT_TIME_SECONDS` | `1200` | Interval (seconds) between heartbeat loop checks |
 | `CONTEXT_LIMIT` | `5000` | Max number of recent messages pulled from SQLite for context |
 
 ### 4. Docker Compose Configuration
