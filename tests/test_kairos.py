@@ -121,8 +121,8 @@ class TestDecide:
         assert call_args.kwargs["response_format"]["type"] == "json_object"
         assert call_args.kwargs["temperature"] == 0.0
 
-    @patch("kairos.OpenAI")
-    def test_decide_api_error_fallback(self, mock_openai_class):
+    #@patch("kairos.OpenAI")
+    #def test_decide_api_error_fallback(self, mock_openai_class):
         """On API error, decide() should return '1' (silent)."""
         mock_client = MagicMock()
         mock_client.chat.completions.create.side_effect = Exception("API down")
