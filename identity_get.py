@@ -103,14 +103,3 @@ if __name__ == "__main__":
     print("--- Executing Local Extraction Test (Free Model Rotation) ---")
     companion_name = get_companion_identity(default_path)
     print(f"Resulting Companion Name: {companion_name}")
-```
-
-**Key points:**
-
-- **Single provider (OpenRouter)** – all models are tried against the same base URL.
-- **Sequential fallback** – tries each free model in order; if one succeeds, it returns immediately.
-- **No cache or blacklist** – every call starts from the first free model.
-- **Fallback model** (`gpt-4o-mini`) is always tried last.
-- **Timeout** and error handling prevent hanging.
-
-You can easily reorder `FREE_MODELS` or add/remove models. The fallback ensures you always have a working model.
