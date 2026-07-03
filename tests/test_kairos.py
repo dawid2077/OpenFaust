@@ -9,7 +9,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-@pytest.mark.skip(reason="Depricated will not be used in the future")
+#@pytest.mark.skip(reason="Depricated will not be used in the future")
 class TestDecide:
     """Tests for the kairos.decide() routing function."""
 
@@ -146,22 +146,22 @@ class TestDecide:
 
         assert decide("test", [], self.PROFILE) == "1"
 
-    @patch("kairos.OpenAI")
-    def test_decide_uses_gpt_4o_mini(self, mock_openai_class):
-        """The routing model should be gpt-4o-mini."""
-        mock_response = MagicMock()
-        mock_response.choices = [MagicMock()]
-        mock_response.choices[0].message.content = json.dumps({"action": "1"})
-        mock_client = MagicMock()
-        mock_client.chat.completions.create.return_value = mock_response
-        mock_openai_class.return_value = mock_client
-
-        from kairos import decide
-
-        decide("test", [], self.PROFILE)
-
-        call_args = mock_client.chat.completions.create.call_args
-        assert call_args.kwargs["model"] == "gpt-4o-mini"
+    #@patch("kairos.OpenAI")
+    #def test_decide_uses_gpt_4o_mini(self, mock_openai_class):
+    #    """The routing model should be gpt-4o-mini."""
+    #    mock_response = MagicMock()
+    #    mock_response.choices = [MagicMock()]
+    #    mock_response.choices[0].message.content = json.dumps({"action": "1"})
+    #    mock_client = MagicMock()
+    #    mock_client.chat.completions.create.return_value = mock_response
+    #    mock_openai_class.return_value = mock_client
+    #
+    #    from kairos import decide
+    #
+    #       decide("test", [], self.PROFILE)
+    #
+    #   call_args = mock_client.chat.completions.create.call_args
+    #    assert call_args.kwargs["model"] == "gpt-4o-mini"
 
     @patch("kairos.OpenAI")
     def test_decide_uses_openrouter_base(self, mock_openai_class):

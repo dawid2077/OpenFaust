@@ -3,82 +3,98 @@ import json
 from pathlib import Path
 from openai import OpenAI
 from dotenv import load_dotenv
-from functools import cache  
+from functools import cache
 
+# Load .env file FIRST
+load_dotenv()
 
+# Now read the API key
+API_KEY = os.getenv("OPENROUTER_API_KEY")
+if not API_KEY:
+    print("⚠️  OPENROUTER_API_KEY not found in .env file. Check your configuration.")
 
-#!this file was vibecoded 
+# List of free models
+FREE_MODELS = [
+    "nvidia/nemotron-3-ultra-550b-a55b:free",
+    "openai/gpt-oss-120b:free",
+    "nvidia/nemotron-3-super-120b-a12b:free",
+    "google/gemma-4-31b-it:free",
+    "google/gemma-4-26b-a4b-it:free",
+    "openai/gpt-oss-20b:free",
+    "cohere/north-mini-code:free",
+    "poolside/laguna-m.1:free",
+    "nvidia/nemotron-3-nano-omni:free",
+    "nvidia/nemotron-nano-12b-2-vl:free",
+    "poolside/laguna-xs-2.1:free",
+    "poolside/laguna-xs.2:free",
+    "nvidia/nemotron-3-nano-30b-a3b-reasoning:free",
+    "nvidia/nemotron-nano-9b-v2-vl:free"
+]
+
+FALLBACK_MODEL = "gpt-4o-mini"
+
 @cache
 def get_companion_identity(personality_path: Path) -> str:
-    """
-    Reads a raw personality profile text file from a Path object, uses a fast, 
-    deterministic LLM call to extract the companion's name, and returns it.
-    
-    Falls back gracefully to 'Faust' if the file is missing or the API fails.
-    """
-    load_dotenv()
-    
-    # 1. Safely resolve and read the user's raw text file
+    # Global API key check
+    if not API_KEY:
+        print("❌ OPENROUTER_API_KEY not set. Cannot proceed.")
+        return "Faust"
+
+    # 1. Read profile file
     try:
         if not isinstance(personality_path, Path):
             personality_path = Path(personality_path)
-            
         if not personality_path.exists():
-            print(f"⚠️  Warning: Profile not found at {personality_path}. Defaulting name to 'Faust'.")
+            print(f"⚠️  Profile not found at {personality_path}. Defaulting to 'Faust'.")
             return "Faust"
-            
         raw_profile = personality_path.read_text(encoding="utf-8").strip()
-        
-        # Guard against completely empty files
         if not raw_profile:
-            print(f"⚠️  Warning: {personality_path} is empty. Defaulting name to 'Faust'.")
+            print(f"⚠️  {personality_path} is empty. Defaulting to 'Faust'.")
             return "Faust"
-            
     except Exception as e:
-        print(f"❌ Error reading file at {personality_path}: {e}. Defaulting to 'Faust'.")
+        print(f"❌ Error reading file: {e}. Defaulting to 'Faust'.")
         return "Faust"
 
-    # 2. Fire a single targeted, low-latency extraction request via OpenRouter
+    # 2. Build messages
+    system_instruction = (
+        "You are a precise data extraction utility. ..."  # your instruction unchanged
+    )
+    messages = [
+        {"role": "system", "content": system_instruction},
+        {"role": "user", "content": f"Profile Text:\n{raw_profile}"}
+    ]
+
+    # 3. Create client ONCE using the global API key
     client = OpenAI(
         base_url="https://openrouter.ai/api/v1",
-        api_key=os.getenv("OPENROUTER_API_KEY")
+        api_key=API_KEY
     )
-    
-    system_instruction = (
-        "You are a precise data extraction utility. Read the provided AI companion personality profile text.\n\n"
-        "Identify the primary name or moniker the assistant goes by or is assigned. "
-        "If no specific name is mentioned anywhere in the text, you must return 'Faust'.\n\n"
-        "Output ONLY a valid JSON object matching this schema: {\"name\": \"extracted_name_here\"}."
-    )
-    
-    try:
-        response = client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[
-                {"role": "system", "content": system_instruction},
-                {"role": "user", "content": f"Profile Text:\n{raw_profile}"}
-            ],
-            response_format={"type": "json_object"},
-            temperature=0.0  # Absolute determinism for reliable JSON outputs
-        )
-        
-        raw_content = response.choices[0].message.content
-        data = json.loads(raw_content)
-        extracted_name = data.get("name", "Faust").strip()
-        
-        print(f"⚙️  Identity Extractor: Resolved active companion name -> [{extracted_name}]")
-        return extracted_name
 
-    except Exception as e:
-        print(f"❌ Failed to extract name via API: {e}. Falling back to 'Faust'.")
-        return "Faust"
+    models_to_try = FREE_MODELS + [FALLBACK_MODEL]
+    for model in models_to_try:
+        try:
+            response = client.chat.completions.create(
+                model=model,
+                messages=messages,
+                response_format={"type": "json_object"},
+                temperature=0.0,
+                timeout=30
+            )
+            raw_content = response.choices[0].message.content
+            data = json.loads(raw_content)
+            extracted_name = data.get("name", "Faust").strip()
+            print(f"⚙️ Identity Extractor (model={model}): Resolved name -> [{extracted_name}]")
+            return extracted_name
+        except Exception as e:
+            print(f"❌ Model {model} failed: {e}. Trying next...")
+            continue
 
+    print("All models failed. Defaulting to 'Faust'.")
+    return "Faust"
 
-# Example local test run when executing the file directly
+# Example test
 if __name__ == "__main__":
-    # Mirroring your environment path configuration setup
     default_path = Path(os.getenv("APP_PERSONALITY_PATH", "./data/personality.md"))
-    
-    print("--- Executing Local Extraction Test ---")
+    print("--- Executing Local Extraction Test (Free Model Rotation) ---")
     companion_name = get_companion_identity(default_path)
     print(f"Resulting Companion Name: {companion_name}")

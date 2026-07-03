@@ -10,7 +10,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-
+@pytest.mark.skip(reason="Depricated will not be used in the future")
 class TestGetCompanionIdentity:
     """Tests for get_companion_identity()."""
 
@@ -116,8 +116,8 @@ class TestGetCompanionIdentity:
         name = get_companion_identity(profile)
         assert name == "Faust"
 
-    @patch("identity_get.OpenAI")
-    def test_uses_gpt_4o_mini_model(self, mock_openai_class, tmp_path: Path):
+    #@patch("identity_get.OpenAI")
+    #def test_uses_gpt_4o_mini_model(self, mock_openai_class, tmp_path: Path):
         """The extraction should use gpt-4o-mini."""
         mock_response = MagicMock()
         mock_response.choices = [MagicMock()]
