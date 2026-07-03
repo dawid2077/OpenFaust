@@ -29,7 +29,27 @@ The ecosystem is built out of isolated modules separating core Discord events, L
 
 ## 🚀 Quick Start
 
-### 1. Environment Configuration
+### 1. Create a Discord Application
+Before running OpenFaust, you need a Discord bot token. Create one here:
+
+1. Go to the [Discord Developer Portal](https://discord.com/developers/applications)
+2. Click **New Application**, give it a name, and create it.
+3. Go to the **Bot** tab on the left sidebar.
+4. Click **Reset Token** (or **Copy** if one already exists) — this is your `DISCORD_TOKEN`. **Keep it secret.**
+5. Under **Privileged Gateway Intents**, enable:
+   - ✅ **MESSAGE CONTENT INTENT** (required for reading message content)
+   - ✅ **SERVER MEMBERS INTENT** (recommended)
+6. Save changes.
+7. Go to the **OAuth2 → URL Generator** tab.
+8. Under **Scopes**, check `bot`.
+9. Under **Bot Permissions**, check:
+   - `Send Messages`
+   - `Read Message History`
+   - `Read Messages/View Channels`
+   - `Mention Everyone` (optional, for auto-wake functionality)
+10. Copy the generated URL, open it in a browser, and invite the bot to your server.
+
+### 2. Environment Configuration
 Create a `.env` file in the root directory:
 
 ```env
@@ -39,7 +59,32 @@ APP_DATA_PATH=/app/data
 APP_PERSONALITY_PATH=/app/data/personality.md
 ```
 
-### 2. Docker Compose Configuration
+### 3. Configuration (`data/config.conf`)
+OpenFaust reads its runtime settings from `data/config.conf`. Copy `data/config.conf.example` to `data/config.conf` and adjust as needed:
+
+```bash
+cp data/config.conf.example data/config.conf
+```
+
+Default settings:
+
+```
+DAILY_LIMIT_MAX=2
+DAYS_AFTER_LIMIT_RESETS=1
+MESSAGES_BY_USER_LIMIT=40
+HEARTBEAT_TIME_SECONDS=15
+CONTEXT_LIMIT=5000
+```
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `DAILY_LIMIT_MAX` | `2` | Max number of messages a user can send before hitting the rate limit |
+| `DAYS_AFTER_LIMIT_RESETS` | `1` | Days until the rate limit resets |
+| `MESSAGES_BY_USER_LIMIT` | `40` | Max direct @mentions per user per day |
+| `HEARTBEAT_TIME_SECONDS` | `15` | Interval (seconds) between heartbeat loop checks |
+| `CONTEXT_LIMIT` | `5000` | Max number of recent messages pulled from SQLite for context |
+
+### 4. Docker Compose Configuration
 Create a `docker-compose.yml` file in the root directory:
 
 ```yaml
@@ -54,7 +99,7 @@ services:
       - ./data:/app/data
 ```
 
-### 3. Run the Framework
+### 5. Run the Framework
 Launch the containerized application in detached mode:
 
 ```bash

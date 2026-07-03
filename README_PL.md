@@ -30,7 +30,27 @@ Ekosystem składa się z odizolowanych modułów oddzielających główne zdarze
 
 ## 🚀 Szybki Start
 
-### 1. Konfiguracja Środowiska
+### 1. Utwórz Aplikację Discord
+Zanim uruchomisz OpenFausta, potrzebujesz tokena bota Discord. Utwórz go tutaj:
+
+1. Wejdź na [Discord Developer Portal](https://discord.com/developers/applications)
+2. Kliknij **New Application**, nadaj nazwę i utwórz.
+3. Przejdź do zakładki **Bot** po lewej stronie.
+4. Kliknij **Reset Token** (lub **Copy**, jeśli już istnieje) — to jest twój `DISCORD_TOKEN`. **Trzymaj go w tajemnicy.**
+5. W sekcji **Privileged Gateway Intents** włącz:
+   - ✅ **MESSAGE CONTENT INTENT** (wymagane do odczytu treści wiadomości)
+   - ✅ **SERVER MEMBERS INTENT** (zalecane)
+6. Zapisz zmiany.
+7. Przejdź do zakładki **OAuth2 → URL Generator**.
+8. W sekcji **Scopes** zaznacz `bot`.
+9. W sekcji **Bot Permissions** zaznacz:
+   - `Send Messages`
+   - `Read Message History`
+   - `Read Messages/View Channels`
+   - `Mention Everyone` (opcjonalne, do funkcji automatycznego wybudzania)
+10. Skopiuj wygenerowany URL, otwórz go w przeglądarce i zaproś bota na swój serwer.
+
+### 2. Konfiguracja Środowiska
 Utwórz plik `.env` w katalogu głównym:
 
 ```env
@@ -40,7 +60,32 @@ APP_DATA_PATH=/app/data
 APP_PERSONALITY_PATH=/app/data/personality.md
 ```
 
-### 2. Konfiguracja Docker Compose
+### 3. Konfiguracja (`data/config.conf`)
+OpenFaust czyta ustawienia uruchomieniowe z pliku `data/config.conf`. Skopiuj `data/config.conf.example` do `data/config.conf` i dostosuj według potrzeb:
+
+```bash
+cp data/config.conf.example data/config.conf
+```
+
+Ustawienia domyślne:
+
+```
+DAILY_LIMIT_MAX=2
+DAYS_AFTER_LIMIT_RESETS=1
+MESSAGES_BY_USER_LIMIT=40
+HEARTBEAT_TIME_SECONDS=15
+CONTEXT_LIMIT=5000
+```
+
+| Ustawienie | Domyślnie | Opis |
+|------------|-----------|------|
+| `DAILY_LIMIT_MAX` | `2` | Maksymalna liczba wiadomości użytkownika przed limitem |
+| `DAYS_AFTER_LIMIT_RESETS` | `1` | Dni do resetu limitu |
+| `MESSAGES_BY_USER_LIMIT` | `40` | Maksymalna liczba @wzmianek na użytkownika dziennie |
+| `HEARTBEAT_TIME_SECONDS` | `15` | Interwał (sekundy) między sprawdzeniami pętli heartbeat |
+| `CONTEXT_LIMIT` | `5000` | Maksymalna liczba ostatnich wiadomości pobieranych z SQLite dla kontekstu |
+
+### 4. Konfiguracja Docker Compose
 Utwórz plik `docker-compose.yml` w katalogu głównym:
 
 ```yaml
@@ -55,7 +100,7 @@ services:
       - ./data:/app/data
 ```
 
-### 3. Uruchomienie Frameworku
+### 5. Uruchomienie Frameworku
 Uruchom skonteneryzowaną aplikację w trybie odizolowanym (detached mode):
 
 ```bash
