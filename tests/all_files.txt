@@ -1,0 +1,1154 @@
+=== File: ./test_integration_flow.py ===
+"""
+Integration tests for OpenFaust — container-based.
+
+Tests the real SQLite database, message persistence, context formatting,
+and Kairos routing. No mocking — tests that need an API key are
+conditionally skipped when OPENROUTER_API_KEY is not set.
+
+Run locally:
+    OPENROUTER_API_KEY=sk-...  python -m pytest tests/test_integration_flow.py -v
+
+Run in Docker (test_runner service):
+    docker compose --profile test run --rm test_runner
+"""
+
+import importlib
+import os
+import sqlite3
+from pathlib import Path
+
+import pytest
+
+
+
+# =========================================================================
+# Helper: point modules at a temporary data directory
+# =========================================================================
+
+
+def _reload_with_env(data_dir: Path):
+    """Set env vars and reload our modules so they pick up the temp DB."""
+    os.environ["APP_DATA_PATH"] = str(data_dir)
+    os.environ["APP_PERSONALITY_PATH"] = str(data_dir / "personality.md")
+    os.environ["APP_CONFIG_PATH"] = str(data_dir / "config.txt")
+
+    for name in ("dockersetup", "save_messages", "context", "tosqlite", "identity_get"):
+        if name in __import__("sys").modules:
+            importlib.reload(__import__("sys").modules[name])
+
+
+# =========================================================================
+# Fixtures
+# =========================================================================
+
+
+@pytest.fixture
+def env(tmp_path: Path) -> Path:
+    """Isolated tmp dir with initialised DB, personality, and config files."""
+    _reload_with_env(tmp_path)
+    # init_db() is called by dockersetup, which runs at import time.
+    # After reloading, we need to call it explicitly:
+    import dockersetup as ds
+
+    ds.init_db()
+    return tmp_path
+
+
+@pytest.fixture
+def seeded(env: Path) -> Path:
+    """env + 7 pre-populated history rows."""
+    from save_messages import save_normal_message
+
+    messages = [
+        ("Cześć wszystkim!", "dawid", 1001),
+        ("Hej Faust, pomożesz mi?", "dawid", 1001),
+        ("Oh, it's you again. What do you want?", "Faust", 999),
+        ("Potrzebuję pomocy z kodem", "dawid", 1001),
+        ("No dobra, mów o co chodzi.", "Faust", 999),
+    ]
+    for content, user, uid in messages:
+        save_normal_message(content, user, uid)
+
+    # Add an LLM response pair (is_event=2 user + is_event=3 assistant)
+    db_path = str(env / "data.db")
+    conn = sqlite3.connect(db_path)
+    conn.execute(
+        "INSERT INTO history (is_event, time_stamp, user_id, username, role, content) "
+        'VALUES (2, "2026-06-01 10:00:00+02:00", "1001", "dawid", "user", '
+        '"Co myślisz o pythonie?")'
+    )
+    conn.execute(
+        "INSERT INTO history (is_event, time_stamp, user_id, username, role, content) "
+        'VALUES (3, "2026-06-01 10:00:05+02:00", "999", "Faust", "assistant", '
+        '"Python? Hmph. It\'s acceptable, I suppose.")'
+    )
+    conn.commit()
+    conn.close()
+    return env
+
+
+# =========================================================================
+# Tests — Layer 1: Database + Context (no API key needed)
+# =========================================================================
+
+
+class TestDatabase:
+    """Verify that messages flow correctly through the real SQLite database."""
+
+    def test_table_created(self, env: Path):
+        """init_db() should create the 'history' table."""
+        db = str(env / "data.db")
+        conn = sqlite3.connect(db)
+        row = conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='history'"
+        ).fetchone()
+        conn.close()
+        assert row is not None
+
+    def test_save_and_count(self, seeded: Path):
+        """5 save_normal_message() calls = 5 rows with is_event=1."""
+        db = str(seeded / "data.db")
+        conn = sqlite3.connect(db)
+        count = conn.execute("SELECT COUNT(*) FROM history WHERE is_event=1").fetchone()[0]
+        conn.close()
+        assert count == 5
+
+    def test_save_llm_pair(self, seeded: Path):
+        """An LLM response pair inserts one user row (+ 1 assistant row)."""
+        db = str(seeded / "data.db")
+        conn = sqlite3.connect(db)
+        user = conn.execute("SELECT COUNT(*) FROM history WHERE is_event=2").fetchone()[0]
+        asst = conn.execute("SELECT COUNT(*) FROM history WHERE is_event=3").fetchone()[0]
+        conn.close()
+        assert user == 1
+        assert asst == 1
+
+    def test_context_call_returns_messages(self, seeded: Path):
+        """context_call() should return formatted message dicts."""
+        import context
+
+        importlib.reload(context)
+        result = context.context_call()
+        assert len(result) >= 5
+        for msg in result:
+            assert "role" in msg
+            assert "content" in msg
+            if msg["role"] == "user":
+                assert ": " in msg["content"]  # username: prefix
+
+    def test_context_kairos_includes_timestamps(self, seeded: Path):
+        """context_kairos() should append 'minutes ago' metadata."""
+        import context
+
+        importlib.reload(context)
+        result = context.context_kairos()
+        assert len(result) >= 5
+        for msg in result:
+            assert "minutes ago" in msg["content"]
+
+    def test_context_empty(self, env: Path):
+        """context_call/kairos return [] for an empty database."""
+        import context
+
+        importlib.reload(context)
+        assert context.context_call() == []
+        assert context.context_kairos() == []
+
+    def test_multiple_users(self, seeded: Path):
+        """Usernames should be distinguishable in context output."""
+        import context
+
+        importlib.reload(context)
+        msgs = [m for m in context.context_call() if m["role"] == "user"]
+        names = set(m["content"].split(":")[0].strip() for m in msgs)
+        assert "dawid" in names
+
+
+# =========================================================================
+# Tests — Layer 2: Identity extraction (no API key needed)
+# =========================================================================
+
+
+class TestIdentity:
+    """Fallback behaviour of get_companion_identity()."""
+
+    def test_missing_file(self, env: Path):
+        """No file -> returns 'Faust'."""
+        from identity_get import get_companion_identity
+
+        assert get_companion_identity(env / "nonexistent.md") == "Faust"
+
+    def test_empty_file(self, env: Path):
+        """Empty file -> returns 'Faust'."""
+        from identity_get import get_companion_identity
+
+        (env / "empty.md").write_text("", encoding="utf-8")
+        assert get_companion_identity(env / "empty.md") == "Faust"
+
+    def test_whitespace_file(self, env: Path):
+        """Whitespace-only file -> returns 'Faust'."""
+        from identity_get import get_companion_identity
+
+        (env / "ws.md").write_text("   \n\n  ", encoding="utf-8")
+        assert get_companion_identity(env / "ws.md") == "Faust"
+
+
+# =========================================================================
+# Tests — Layer 3: Kairos routing (requires real OPENROUTER_API_KEY)
+# =========================================================================
+
+
+def _has_real_api_key() -> bool:
+    """True if OPENROUTER_API_KEY looks like a real key (not a test placeholder)."""
+    key = os.getenv("OPENROUTER_API_KEY", "")
+    if not key:
+        return False
+    # Skip the placeholder that conftest.py's setdefault injects
+    if "test-skip" in key or key.startswith("fake"):
+        return False
+    return True
+
+
+need_api = pytest.mark.skipif(
+    not _has_real_api_key(),
+    reason="Real OPENROUTER_API_KEY not set — skipping API-dependent tests",
+)
+
+# Full pipeline needs real API key AND clean env (not polluted by unit test mocks)
+need_pipeline = pytest.mark.skipif(
+    not _has_real_api_key(),
+    reason="Real OPENROUTER_API_KEY required for full pipeline test — run in isolation",
+)
+
+
+@need_api
+class TestKairos:
+    """Real API calls to the Kairos routing engine."""
+
+    def _profile(self, seeded: Path) -> str:
+        return (seeded / "personality.md").read_text(encoding="utf-8")
+
+    def test_decide_returns_action(self, seeded: Path):
+        """decide() should return '1', '2', or '3'."""
+        from kairos import decide
+
+        result = decide("Faust, are you there?", [], self._profile(seeded))
+        assert result in ("1", "2", "3")
+
+    def test_decide_with_context(self, seeded: Path):
+        """decide() with real context should not crash."""
+        import context
+
+        importlib.reload(context)
+        from kairos import decide
+
+        ctx = context.context_kairos()
+        result = decide("What do you think?", ctx, self._profile(seeded))
+        assert result in ("1", "2", "3")
+
+
+# =========================================================================
+# Tests — Layer 4: Full pipeline (requires OPENROUTER_API_KEY)
+# =========================================================================
+
+
+@need_pipeline
+class TestPipeline:
+    """End-to-end: save message -> call LLM -> verify response persisted."""
+
+    def test_call_mistral_saves_response(self, env: Path):
+        """call_mistral() returns text and the response is stored in the DB."""
+        # Reload api module to get a clean client (not polluted by other tests' mocks)
+        import api
+        importlib.reload(api)
+        from api import call_mistral
+
+        response = call_mistral(
+            messagecontent="Say hello in one sentence.",
+            nickname="tester",
+            user_id=42,
+            bot_id=999,
+            bot_name="Faust",
+        )
+        assert isinstance(response, str)
+        assert len(response) > 0
+
+        db = str(env / "data.db")
+        conn = sqlite3.connect(db)
+        row = conn.execute(
+            "SELECT role, content FROM history WHERE is_event=3 ORDER BY id DESC LIMIT 1"
+        ).fetchone()
+        conn.close()
+        assert row is not None
+        assert row[0] == "assistant"
+        assert len(row[1]) > 0
+
+=================================
+
+=== File: ./test_database.py ===
+"""
+Tests for the database layer: dockersetup, tosqlite, save_messages, and context.
+All tests use an isolated temporary SQLite file.
+
+Note: tosqlite.py and save_messages.py have module-level DB connections,
+so tests that exercise those modules use importlib.reload() after setting
+the APP_DATA_PATH environment variable.
+"""
+
+import importlib
+import os
+import sqlite3
+from pathlib import Path
+
+import pytest
+
+
+# =========================================================================
+# dockersetup – init_db
+# =========================================================================
+
+
+class TestInitDb:
+    def test_init_db_creates_table(self, init_test_db: Path):
+        """init_db() should create the 'history' table."""
+        db = str(init_test_db / "data.db")
+        conn = sqlite3.connect(db)
+        cursor = conn.cursor()
+        cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='history'")
+        assert cursor.fetchone() is not None, "history table was not created"
+        conn.close()
+
+    def test_init_db_creates_personality_file(self, init_test_db: Path):
+        """init_db() should create personality.md if it doesn't exist."""
+        p = init_test_db / "personality.md"
+        assert p.exists(), "personality.md was not created"
+        content = p.read_text(encoding="utf-8")
+        assert "Faust" in content or "tsundere" in content
+
+    def test_init_db_creates_config_file(self, init_test_db: Path):
+        """init_db() should create config.txt if it doesn't exist."""
+        p = init_test_db / "config.txt"
+        assert p.exists(), "config.txt was not created"
+        content = p.read_text(encoding="utf-8")
+        assert "DAILY_LIMIT_MAX" in content
+
+    def test_init_db_is_idempotent(self, init_test_db: Path):
+        """Calling init_db() twice should not raise."""
+        from dockersetup import init_db
+
+        init_db()  # second call
+        db = str(init_test_db / "data.db")
+        conn = sqlite3.connect(db)
+        cursor = conn.cursor()
+        cursor.execute("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='history'")
+        assert cursor.fetchone()[0] == 1
+        conn.close()
+
+
+# =========================================================================
+# save_messages – save_normal_message
+# =========================================================================
+
+
+class TestSaveNormalMessage:
+    def _reload_save_messages(self, tmp_data_dir: Path):
+        """Set env and reload save_messages module so it picks up the temp path."""
+        os.environ["APP_DATA_PATH"] = str(tmp_data_dir)
+        import save_messages as sm
+        importlib.reload(sm)
+        return sm
+
+    def test_save_normal_message_inserts_row(self, init_test_db: Path, tmp_data_dir: Path):
+        """save_normal_message() should insert a user message into history."""
+        sm = self._reload_save_messages(tmp_data_dir)
+        sm.save_normal_message("Hello world", "dawid", 42)
+
+        db = str(tmp_data_dir / "data.db")
+        conn = sqlite3.connect(db)
+        cursor = conn.cursor()
+        cursor.execute("SELECT is_event, username, role, content FROM history WHERE is_event=1")
+        rows = cursor.fetchall()
+        conn.close()
+
+        assert len(rows) == 1
+        assert rows[0] == (1, "dawid", "user", "Hello world")
+
+    def test_save_normal_message_multiple(self, init_test_db: Path, tmp_data_dir: Path):
+        """Multiple calls should insert multiple rows."""
+        sm = self._reload_save_messages(tmp_data_dir)
+        sm.save_normal_message("msg1", "alice", 10)
+        sm.save_normal_message("msg2", "bob", 20)
+
+        db = str(tmp_data_dir / "data.db")
+        conn = sqlite3.connect(db)
+        cursor = conn.cursor()
+        cursor.execute("SELECT COUNT(*) FROM history WHERE is_event=1")
+        assert cursor.fetchone()[0] == 2
+        conn.close()
+
+    def test_save_normal_message_empty_content(self, init_test_db: Path, tmp_data_dir: Path):
+        """Empty message content should still be saved."""
+        sm = self._reload_save_messages(tmp_data_dir)
+        sm.save_normal_message("", "dawid", 42)
+
+        db = str(tmp_data_dir / "data.db")
+        conn = sqlite3.connect(db)
+        cursor = conn.cursor()
+        cursor.execute("SELECT content FROM history WHERE is_event=1")
+        assert cursor.fetchone()[0] == ""
+        conn.close()
+
+
+# =========================================================================
+# tosqlite – save
+# =========================================================================
+
+
+class TestToSqliteSave:
+    def _reload_tosqlite(self, tmp_data_dir: Path):
+        """Set env and reload tosqlite module so it picks up the temp path."""
+        os.environ["APP_DATA_PATH"] = str(tmp_data_dir)
+        import tosqlite as ts
+        importlib.reload(ts)
+        return ts
+
+    def test_save_inserts_user_and_assistant(self, init_test_db: Path, tmp_data_dir: Path):
+        """save() should insert one user row and one assistant row."""
+        ts = self._reload_tosqlite(tmp_data_dir)
+
+        fake_metadata = (
+            '{"id":"gen-test","choices":[{"finish_reason":"stop","index":0,'
+            '"message":{"content":"Sure thing!","role":"assistant","refusal":null}}],'
+            '"created":1700000000,"model":"mistralai/mistral-small-2603","object":"chat.completion",'
+            '"usage":{"completion_tokens":5,"prompt_tokens":10,"total_tokens":15}}'
+        )
+        ts.save("dawid", fake_metadata, 100, "Hello!", 999, "Faust")
+
+        db = str(tmp_data_dir / "data.db")
+        conn = sqlite3.connect(db)
+        cursor = conn.cursor()
+        cursor.execute("SELECT is_event, username, role, content FROM history ORDER BY id")
+        rows = cursor.fetchall()
+        conn.close()
+
+        assert len(rows) == 2
+        assert rows[0] == (2, "dawid", "user", "Hello!")
+        assert rows[1] == (3, "Faust", "assistant", "Sure thing!")
+
+    def test_save_with_invalid_json(self, init_test_db: Path, tmp_data_dir: Path):
+        """If raw_metadata is not valid JSON, save should still work."""
+        ts = self._reload_tosqlite(tmp_data_dir)
+        ts.save("dawid", "not-json-at-all", 100, "hi", 999, "Faust")
+
+        db = str(tmp_data_dir / "data.db")
+        conn = sqlite3.connect(db)
+        cursor = conn.cursor()
+        cursor.execute("SELECT COUNT(*) FROM history")
+        assert cursor.fetchone()[0] == 2  # still inserts both rows
+        conn.close()
+
+
+# =========================================================================
+# context – context_call & context_kairos
+# =========================================================================
+
+
+class TestContextCall:
+    def test_context_call_returns_messages(self, populated_db: Path):
+        """context_call() should return the history as a list of dicts."""
+        # Reload context module with the correct DB path
+        import context as ctx
+        importlib.reload(ctx)
+
+        result = ctx.context_call()
+        assert isinstance(result, list)
+        assert len(result) == 3
+
+    def test_context_call_structure(self, populated_db: Path):
+        """Each item should have 'role' and 'content' keys."""
+        import context as ctx
+        importlib.reload(ctx)
+
+        result = ctx.context_call()
+        for msg in result:
+            assert "role" in msg
+            assert "content" in msg
+
+    def test_context_call_user_prefix(self, populated_db: Path):
+        """User messages should have username: prefix in content."""
+        import context as ctx
+        importlib.reload(ctx)
+
+        result = ctx.context_call()
+        user_msgs = [m for m in result if m["role"] == "user"]
+        assert any("dawid:" in m["content"] for m in user_msgs)
+
+    def test_context_call_empty_db(self, init_test_db: Path):
+        """context_call() should return [] for an empty database."""
+        import context as ctx
+        importlib.reload(ctx)
+
+        result = ctx.context_call()
+        assert result == []
+
+
+class TestContextKairos:
+    def test_context_kairos_returns_messages(self, populated_db: Path):
+        """context_kairos() should return the history."""
+        import context as ctx
+        importlib.reload(ctx)
+
+        result = ctx.context_kairos()
+        assert isinstance(result, list)
+        assert len(result) == 3
+
+    def test_context_kairos_includes_time(self, populated_db: Path):
+        """Kairos context should include 'minutes ago' metadata."""
+        import context as ctx
+        importlib.reload(ctx)
+
+        result = ctx.context_kairos()
+        for msg in result:
+            assert "minutes ago" in msg["content"]
+
+    def test_context_kairos_empty_db(self, init_test_db: Path):
+        """context_kairos() should return [] for an empty database."""
+        import context as ctx
+        importlib.reload(ctx)
+
+        assert ctx.context_kairos() == []
+
+=================================
+
+=== File: ./conftest.py ===
+"""
+Shared test fixtures and configuration for OpenFaust tests.
+
+All tests that touch the database use an isolated temporary SQLite file
+so they never interfere with production data or with each other.
+"""
+
+import os
+import shutil
+import tempfile
+import warnings
+from pathlib import Path
+from typing import Generator
+
+import pytest
+
+# ---------------------------------------------------------------------------
+# Global test environment – set before any module imports happen
+# ---------------------------------------------------------------------------
+os.environ.setdefault("OPENROUTER_API_KEY", "test-skip-key-12345")
+os.environ.setdefault("DISCORD_TOKEN", "test-skip-token")
+os.environ.setdefault("APP_DATA_PATH", "/tmp/openfaust-test-data")
+os.environ.setdefault("APP_PERSONALITY_PATH", "/tmp/openfaust-test-data/personality.md")
+os.environ.setdefault("APP_CONFIG_PATH", "/tmp/openfaust-test-data/config.txt")
+os.environ.setdefault("HEARTBEAT_TIME_SECONDS", "86400")  # far future
+os.environ.setdefault("DAILY_LIMIT_MAX", "10")
+os.environ.setdefault("DAYS_AFTER_LIMIT_RESETS", "1")
+os.environ.setdefault("MESSAGES_BY_USER_LIMIT", "40")
+
+
+@pytest.fixture(autouse=True)
+def _suppress_resource_warnings():
+    """Suppress unclosed-socket / SSL warnings from httpx during tests."""
+    warnings.filterwarnings("ignore", category=ResourceWarning)
+
+
+# ---------------------------------------------------------------------------
+# Fixture: isolated temporary directory for each test function
+# ---------------------------------------------------------------------------
+@pytest.fixture
+def tmp_data_dir() -> Generator[Path, None, None]:
+    """Create & yield a temporary data directory, then clean it up."""
+    tmp = Path(tempfile.mkdtemp(prefix="openfaust-test-"))
+    # Pre-populate a minimal personality file so imports don't crash
+    (tmp / "personality.md").write_text(
+        "You are a helpful tsundere assistant named Faust.",
+        encoding="utf-8",
+    )
+    (tmp / "config.txt").write_text(
+        "DAILY_LIMIT_MAX=10\nDAYS_AFTER_LIMIT_RESETS=1\nMESSAGES_BY_USER_LIMIT=40\nHEARTBEAT_TIME_SECONDS=86400\n",
+        encoding="utf-8",
+    )
+    yield tmp
+    shutil.rmtree(str(tmp), ignore_errors=True)
+
+
+@pytest.fixture
+def db_path(tmp_data_dir: Path) -> str:
+    """Return the path to a temp SQLite database file."""
+    return str(tmp_data_dir / "data.db")
+
+
+# ---------------------------------------------------------------------------
+# Fixture: fully initialised test database + environment
+# ---------------------------------------------------------------------------
+@pytest.fixture
+def init_test_db(tmp_data_dir: Path) -> Path:
+    """Pre-populate the environment variables and call dockersetup.init_db()."""
+    os.environ["APP_DATA_PATH"] = str(tmp_data_dir)
+    os.environ["APP_PERSONALITY_PATH"] = str(tmp_data_dir / "personality.md")
+    os.environ["APP_CONFIG_PATH"] = str(tmp_data_dir / "config.txt")
+
+    # Avoid circular / side-effect imports – call init_db directly
+    from dockersetup import init_db
+
+    init_db()
+    return tmp_data_dir
+
+
+@pytest.fixture
+def populated_db(init_test_db: Path) -> Path:
+    """Return a temp DB that already has a few history rows."""
+    import sqlite3
+
+    db = str(init_test_db / "data.db")
+    conn = sqlite3.connect(db)
+    cursor = conn.cursor()
+
+    rows = [
+        (1, "2026-06-01 10:00:00+02:00", "user_1", "dawid", "user", "Cześć!", None),
+        (2, "2026-06-01 10:00:05+02:00", "user_1", "dawid", "user", "Hej Faust", None),
+        (3, "2026-06-01 10:00:10+02:00", "bot_1", "Faust", "assistant", "Oh, it's you again.", None),
+    ]
+    cursor.executemany(
+        "INSERT INTO history (is_event, time_stamp, user_id, username, role, content, raw_metadata) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?)",
+        rows,
+    )
+    conn.commit()
+    conn.close()
+    return init_test_db
+
+=================================
+
+=== File: ./__init__.py ===
+
+=================================
+
+=== File: ./test_api.py ===
+"""
+Tests for the API layer (api.py).
+
+Uses mock patching *before* module import to avoid real API calls
+from module-level OpenAI client initialisation.
+"""
+
+import importlib
+import json
+import os
+from pathlib import Path
+from unittest.mock import MagicMock, patch
+
+import pytest
+
+
+@pytest.fixture(autouse=True)
+def _setup_env_and_mocks(monkeypatch, tmp_path: Path):
+    """Ensure env vars and mocks are in place BEFORE api module is imported."""
+    monkeypatch.setenv("OPENROUTER_API_KEY", "test-key-123")
+    monkeypatch.setenv("APP_DATA_PATH", str(tmp_path))
+    monkeypatch.setenv("APP_PERSONALITY_PATH", str(tmp_path / "personality.md"))
+    monkeypatch.setenv("APP_CONFIG_PATH", str(tmp_path / "config.txt"))
+
+    # Pre-populate personality file so call_mistral can load it
+    (tmp_path / "personality.md").write_text(
+        "You are a tsundere assistant named Faust.", encoding="utf-8"
+    )
+    (tmp_path / "config.txt").write_text("", encoding="utf-8")
+
+    # Pre-populate a minimal SQLite DB so context_call() doesn't crash
+    import sqlite3
+    db_path = str(tmp_path / "data.db")
+    conn = sqlite3.connect(db_path)
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS history ("
+        "id INTEGER PRIMARY KEY AUTOINCREMENT,"
+        "is_event INTEGER NOT NULL,"
+        "time_stamp TEXT NOT NULL,"
+        "user_id TEXT, username TEXT, role TEXT, content TEXT, raw_metadata TEXT)"
+    )
+    conn.close()
+
+    # Mock OpenAI *before* any imports so the module-level OpenAI() call
+    # in api.py / identity_get.py gets the mock version.
+    patcher = patch("openai.OpenAI")
+    mock_openai_class = patcher.start()
+
+    mock_response = MagicMock()
+    mock_response.choices = [MagicMock()]
+    mock_response.choices[0].message.content = "Mock response"
+    mock_response.model_dump_json.return_value = json.dumps(
+        {"id": "test", "choices": [{"message": {"content": "Mock response", "role": "assistant"}}]}
+    )
+    mock_client = MagicMock()
+    mock_client.chat.completions.create.return_value = mock_response
+    mock_openai_class.return_value = mock_client
+
+    yield mock_openai_class
+
+    patcher.stop()
+
+
+class TestCallMistral:
+    """Tests for call_mistral() — the main LLM interaction function."""
+
+    def _import_api(self):
+        """Import (or reload) api module so module-level code sees our env & mocks."""
+        import api as _api
+        importlib.reload(_api)
+        return _api
+
+    def test_call_mistral_returns_string(self):
+        api = self._import_api()
+        result = api.call_mistral("Hi!", "dawid", 42, 999, "Faust")
+        assert isinstance(result, str)
+        assert len(result) > 0
+
+    def test_call_mistral_includes_profile(self):
+        api = self._import_api()
+        api.call_mistral("Hi", "dawid", 42, 999, "Faust")
+        client = api.client
+        call_args = client.chat.completions.create.call_args
+        messages = call_args.kwargs["messages"]
+        system_msg = messages[0]
+        assert system_msg["role"] == "system"
+        assert "Faust" in system_msg["content"] or "tsundere" in system_msg["content"]
+
+    def test_call_mistral_uses_mistral_model(self):
+        api = self._import_api()
+        api.call_mistral("Hi", "dawid")
+        client = api.client
+        call_args = client.chat.completions.create.call_args
+        assert "mistralai/mistral-small-2603" in call_args.kwargs["model"]
+
+    def test_call_mistral_uses_openrouter(self):
+        api = self._import_api()
+        # The module-level OpenAI() was already called with mock — check constructor
+        # We can verify by checking that the global client exists
+        assert api.client is not None
+
+    def test_call_mistral_type_1_heartbeat(self):
+        api = self._import_api()
+        result = api.call_mistral("", "dawid", 42, 999, "Faust", type=1)
+        assert isinstance(result, str)
+
+        client = api.client
+        call_args = client.chat.completions.create.call_args
+        messages = call_args.kwargs["messages"]
+        system_content = messages[0]["content"]
+        assert "silent" in system_content.lower()
+
+
+class TestGenerateAnswerCall:
+    """Tests for generate_answer_call()."""
+
+    def _import_api(self):
+        import api as _api
+        importlib.reload(_api)
+        return _api
+
+    def test_generate_answer_call_returns_content(self):
+        api = self._import_api()
+        result = api.generate_answer_call(
+            [{"role": "user", "content": "hello"}], "dawid", 42, "hello", 999, "Faust"
+        )
+        assert result == "Mock response"
+
+    def test_generate_answer_call_with_fallbacks(self):
+        api = self._import_api()
+        api.generate_answer_call(
+            [{"role": "user", "content": "hi"}], "dawid"
+        )
+        client = api.client
+        call_args = client.chat.completions.create.call_args
+        extra_body = call_args.kwargs["extra_body"]
+        assert extra_body["provider"]["allow_fallbacks"] is True
+        assert "mistral" in extra_body["provider"]["order"]
+
+    def test_generate_answer_call_api_error(self):
+        """Should propagate the exception (no silent failure)."""
+        import api as _api
+        importlib.reload(_api)
+        _api.client.chat.completions.create.side_effect = ConnectionError("Network down")
+
+        with pytest.raises(ConnectionError):
+            _api.generate_answer_call(
+                [{"role": "user", "content": "hi"}], "dawid"
+            )
+
+=================================
+
+=== File: ./test_identity.py ===
+"""
+Tests for the identity extraction module (identity_get.py).
+
+Uses mocked OpenAI calls so tests are fast, deterministic, and don't require an API key.
+"""
+
+import json
+from pathlib import Path
+from unittest.mock import MagicMock, patch
+
+import pytest
+
+@pytest.mark.skip(reason="Depricated will not be used in the future")
+class TestGetCompanionIdentity:
+    """Tests for get_companion_identity()."""
+
+    @pytest.fixture(autouse=True)
+    def _setup_env(self, monkeypatch):
+        monkeypatch.setenv("OPENROUTER_API_KEY", "test-key")
+
+    @patch("identity_get.OpenAI")
+    def test_extracts_name_from_profile(self, mock_openai_class, tmp_path: Path):
+        """Should extract the companion name from the personality file."""
+        mock_response = MagicMock()
+        mock_response.choices = [MagicMock()]
+        mock_response.choices[0].message.content = json.dumps({"name": "Faust"})
+        mock_client = MagicMock()
+        mock_client.chat.completions.create.return_value = mock_response
+        mock_openai_class.return_value = mock_client
+
+        profile = tmp_path / "personality.md"
+        profile.write_text("You are a tsundere assistant named Faust.", encoding="utf-8")
+
+        from identity_get import get_companion_identity
+
+        name = get_companion_identity(profile)
+        assert name == "Faust"
+
+    @patch("identity_get.OpenAI")
+    def test_extracts_custom_name(self, mock_openai_class, tmp_path: Path):
+        """Should extract a custom name from the personality file."""
+        mock_response = MagicMock()
+        mock_response.choices = [MagicMock()]
+        mock_response.choices[0].message.content = json.dumps({"name": "Mephistopheles"})
+        mock_client = MagicMock()
+        mock_client.chat.completions.create.return_value = mock_response
+        mock_openai_class.return_value = mock_client
+
+        profile = tmp_path / "personality.md"
+        profile.write_text("You are a polite demon butler named Mephistopheles.", encoding="utf-8")
+
+        from identity_get import get_companion_identity
+
+        name = get_companion_identity(profile)
+        assert name == "Mephistopheles"
+
+    def test_returns_faust_for_missing_file(self, tmp_path: Path):
+        """Missing personality file should fall back to 'Faust'."""
+        missing = tmp_path / "nonexistent.md"
+
+        from identity_get import get_companion_identity
+
+        name = get_companion_identity(missing)
+        assert name == "Faust"
+
+    def test_returns_faust_for_empty_file(self, tmp_path: Path):
+        """Empty personality file should fall back to 'Faust'."""
+        empty = tmp_path / "empty.md"
+        empty.write_text("", encoding="utf-8")
+
+        from identity_get import get_companion_identity
+
+        name = get_companion_identity(empty)
+        assert name == "Faust"
+
+    def test_returns_faust_for_whitespace_file(self, tmp_path: Path):
+        """Whitespace-only personality file should fall back to 'Faust'."""
+        ws = tmp_path / "whitespace.md"
+        ws.write_text("   \n\n  \t  ", encoding="utf-8")
+
+        from identity_get import get_companion_identity
+
+        name = get_companion_identity(ws)
+        assert name == "Faust"
+
+    @patch("identity_get.OpenAI")
+    def test_returns_faust_on_api_error(self, mock_openai_class, tmp_path: Path):
+        """API failure should fall back gracefully to 'Faust'."""
+        mock_client = MagicMock()
+        mock_client.chat.completions.create.side_effect = Exception("Connection refused")
+        mock_openai_class.return_value = mock_client
+
+        profile = tmp_path / "personality.md"
+        profile.write_text("You are a friendly bot named Bob.", encoding="utf-8")
+
+        from identity_get import get_companion_identity
+
+        name = get_companion_identity(profile)
+        assert name == "Faust"
+
+    @patch("identity_get.OpenAI")
+    def test_returns_faust_on_malformed_json(self, mock_openai_class, tmp_path: Path):
+        """Malformed JSON from API should fall back to 'Faust'."""
+        mock_response = MagicMock()
+        mock_response.choices = [MagicMock()]
+        mock_response.choices[0].message.content = "not-json"
+        mock_client = MagicMock()
+        mock_client.chat.completions.create.return_value = mock_response
+        mock_openai_class.return_value = mock_client
+
+        profile = tmp_path / "personality.md"
+        profile.write_text("You are a bot named Bob.", encoding="utf-8")
+
+        from identity_get import get_companion_identity
+
+        name = get_companion_identity(profile)
+        assert name == "Faust"
+
+    #@patch("identity_get.OpenAI")
+    #def test_uses_gpt_4o_mini_model(self, mock_openai_class, tmp_path: Path):
+        """The extraction should use gpt-4o-mini."""
+        mock_response = MagicMock()
+        mock_response.choices = [MagicMock()]
+        mock_response.choices[0].message.content = json.dumps({"name": "Faust"})
+        mock_client = MagicMock()
+        mock_client.chat.completions.create.return_value = mock_response
+        mock_openai_class.return_value = mock_client
+
+        profile = tmp_path / "personality.md"
+        profile.write_text("You are Faust.", encoding="utf-8")
+
+        from identity_get import get_companion_identity
+
+        get_companion_identity(profile)
+
+        call_args = mock_client.chat.completions.create.call_args
+        assert call_args.kwargs["model"] == "gpt-4o-mini"
+
+    @patch("identity_get.OpenAI")
+    def test_result_cached(self, mock_openai_class, tmp_path: Path):
+        """The @cache decorator should avoid duplicate API calls for the same file."""
+        mock_response = MagicMock()
+        mock_response.choices = [MagicMock()]
+        mock_response.choices[0].message.content = json.dumps({"name": "Faust"})
+        mock_client = MagicMock()
+        mock_client.chat.completions.create.return_value = mock_response
+        mock_openai_class.return_value = mock_client
+
+        profile = tmp_path / "personality.md"
+        profile.write_text("You are Faust.", encoding="utf-8")
+
+        from identity_get import get_companion_identity
+
+        # First call
+        get_companion_identity(profile)
+        # Second call should hit cache
+        get_companion_identity(profile)
+
+        # Should only have been called once
+        assert mock_client.chat.completions.create.call_count == 1
+
+=================================
+
+=== File: ./test_kairos.py ===
+"""
+Tests for the Kairos routing engine (kairos.decide).
+
+All direct OpenAI calls are mocked so tests are fast and deterministic.
+"""
+
+import json
+from unittest.mock import MagicMock, patch
+
+import pytest
+
+#@pytest.mark.skip(reason="Depricated will not be used in the future")
+class TestDecide:
+    """Tests for the kairos.decide() routing function."""
+
+    PROFILE = "You are a tsundere assistant named Faust."
+
+    @pytest.fixture(autouse=True)
+    def _setup_env(self, monkeypatch):
+        """Ensure env vars are set before each test."""
+        monkeypatch.setenv("OPENROUTER_API_KEY", "test-key")
+        monkeypatch.setenv("APP_DATA_PATH", "/tmp")
+        monkeypatch.setenv("APP_PERSONALITY_PATH", "/tmp/personality.md")
+
+    @patch("kairos.OpenAI")
+    def test_decide_returns_action(self, mock_openai_class):
+        """decide() should return a string action code."""
+        # Setup mock response
+        mock_response = MagicMock()
+        mock_response.choices = [MagicMock()]
+        mock_response.choices[0].message.content = json.dumps({"action": "3"})
+        mock_client = MagicMock()
+        mock_client.chat.completions.create.return_value = mock_response
+        mock_openai_class.return_value = mock_client
+
+        from kairos import decide
+
+        result = decide("Hey Faust!", [], self.PROFILE)
+        assert isinstance(result, str)
+        assert result in ("0", "1", "2", "3")
+
+    @patch("kairos.OpenAI")
+    def test_decide_engage_direct_call(self, mock_openai_class):
+        """Direct name call should route as '3' (engage)."""
+        mock_response = MagicMock()
+        mock_response.choices = [MagicMock()]
+        mock_response.choices[0].message.content = json.dumps({"action": "3"})
+        mock_client = MagicMock()
+        mock_client.chat.completions.create.return_value = mock_response
+        mock_openai_class.return_value = mock_client
+
+        from kairos import decide
+
+        assert decide("Faust, help me!", [], self.PROFILE) == "3"
+
+    @patch("kairos.OpenAI")
+    def test_decide_silent_generic(self, mock_openai_class):
+        """Generic background chatter should route as '1' (silent)."""
+        mock_response = MagicMock()
+        mock_response.choices = [MagicMock()]
+        mock_response.choices[0].message.content = json.dumps({"action": "1"})
+        mock_client = MagicMock()
+        mock_client.chat.completions.create.return_value = mock_response
+        mock_openai_class.return_value = mock_client
+
+        from kairos import decide
+
+        assert decide("Anyone wanna play?", [], self.PROFILE) == "1"
+
+    @patch("kairos.OpenAI")
+    def test_decide_react_greeting(self, mock_openai_class):
+        """Room greetings should route as '2' (react)."""
+        mock_response = MagicMock()
+        mock_response.choices = [MagicMock()]
+        mock_response.choices[0].message.content = json.dumps({"action": "2"})
+        mock_client = MagicMock()
+        mock_client.chat.completions.create.return_value = mock_response
+        mock_openai_class.return_value = mock_client
+
+        from kairos import decide
+
+        assert decide("Hi everyone!", [], self.PROFILE) == "2"
+
+    @patch("kairos.OpenAI")
+    def test_decide_with_context_provided(self, mock_openai_class):
+        """Context should be passed through to the API."""
+        mock_response = MagicMock()
+        mock_response.choices = [MagicMock()]
+        mock_response.choices[0].message.content = json.dumps({"action": "3"})
+        mock_client = MagicMock()
+        mock_client.chat.completions.create.return_value = mock_response
+        mock_openai_class.return_value = mock_client
+
+        from kairos import decide
+
+        context = [{"role": "user", "content": "dawid: how are you?"}]
+        result = decide("I'm fine", context, self.PROFILE)
+        assert result == "3"
+
+        # Verify context was included in the API call
+        call_args = mock_client.chat.completions.create.call_args
+        messages = call_args.kwargs["messages"]
+        # system + context messages + user
+        assert len(messages) >= 2
+
+    @patch("kairos.OpenAI")
+    def test_decide_json_response_format(self, mock_openai_class):
+        """The API call should request JSON response format."""
+        mock_response = MagicMock()
+        mock_response.choices = [MagicMock()]
+        mock_response.choices[0].message.content = json.dumps({"action": "1"})
+        mock_client = MagicMock()
+        mock_client.chat.completions.create.return_value = mock_response
+        mock_openai_class.return_value = mock_client
+
+        from kairos import decide
+
+        decide("test", [], self.PROFILE)
+
+        call_args = mock_client.chat.completions.create.call_args
+        assert call_args.kwargs["response_format"]["type"] == "json_object"
+        assert call_args.kwargs["temperature"] == 0.0
+
+    @patch("kairos.OpenAI")
+    def test_decide_api_error_fallback(self, mock_openai_class):
+        """On API error, decide() should return '1' (silent)."""
+        mock_client = MagicMock()
+        mock_client.chat.completions.create.side_effect = Exception("API down")
+        mock_openai_class.return_value = mock_client
+
+        from kairos import decide
+
+        assert decide("Faust?", [], self.PROFILE) == "1"
+
+    @patch("kairos.OpenAI")
+    def test_decide_malformed_json_fallback(self, mock_openai_class):
+        """On malformed JSON response, decide() should return '1'."""
+        mock_response = MagicMock()
+        mock_response.choices = [MagicMock()]
+        mock_response.choices[0].message.content = "not json at all"
+        mock_client = MagicMock()
+        mock_client.chat.completions.create.return_value = mock_response
+        mock_openai_class.return_value = mock_client
+
+        from kairos import decide
+
+        assert decide("test", [], self.PROFILE) == "1"
+
+    #@patch("kairos.OpenAI")
+    #def test_decide_uses_gpt_4o_mini(self, mock_openai_class):
+    #    """The routing model should be gpt-4o-mini."""
+    #    mock_response = MagicMock()
+    #    mock_response.choices = [MagicMock()]
+    #    mock_response.choices[0].message.content = json.dumps({"action": "1"})
+    #    mock_client = MagicMock()
+    #    mock_client.chat.completions.create.return_value = mock_response
+    #    mock_openai_class.return_value = mock_client
+    #
+    #    from kairos import decide
+    #
+    #       decide("test", [], self.PROFILE)
+    #
+    #   call_args = mock_client.chat.completions.create.call_args
+    #    assert call_args.kwargs["model"] == "gpt-4o-mini"
+
+    @patch("kairos.OpenAI")
+    def test_decide_uses_openrouter_base(self, mock_openai_class):
+        """The client should target OpenRouter base URL."""
+        mock_response = MagicMock()
+        mock_response.choices = [MagicMock()]
+        mock_response.choices[0].message.content = json.dumps({"action": "1"})
+        mock_client = MagicMock()
+        mock_client.chat.completions.create.return_value = mock_response
+        mock_openai_class.return_value = mock_client
+
+        from kairos import decide
+
+        decide("test", [], self.PROFILE)
+
+        # Check that client was constructed with the right base_url
+        call_kwargs = mock_openai_class.call_args
+        assert "https://openrouter.ai/api/v1" in str(call_kwargs)
+
+    @patch("kairos.OpenAI")
+    def test_decide_empty_message(self, mock_openai_class):
+        """Empty message should still process without error."""
+        mock_response = MagicMock()
+        mock_response.choices = [MagicMock()]
+        mock_response.choices[0].message.content = json.dumps({"action": "1"})
+        mock_client = MagicMock()
+        mock_client.chat.completions.create.return_value = mock_response
+        mock_openai_class.return_value = mock_client
+
+        from kairos import decide
+
+        # Should not raise
+        result = decide("", [], self.PROFILE)
+        assert isinstance(result, str)
+=================================
+
+=== File: ./all_files.txt ===
+
+=================================
+
