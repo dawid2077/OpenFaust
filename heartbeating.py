@@ -61,7 +61,7 @@ def roll(probability: float) -> bool:
 #calculate pulls from the sqlite latest message time
 def heartbeating(task_queue):
     #delete this before release
-    #last_message_minutes_time=720
+    #last_message_minutes_time=1000
     last_message_minutes_time=0
     daily_limit=0
     while True:
