@@ -6,6 +6,7 @@ from multiprocessing import Process
 from multiprocessing import Process, Queue 
 from discord.ext import tasks
 from pathlib import Path
+import asyncio
 
 from dockersetup import init_db
 
@@ -116,7 +117,9 @@ async def on_message(message):
     else:
         message.content=message.content.split(">")[-1].strip()
         save_normal_message(message.content,nickname, user_id)
-        decision=decide(message.content,context_kairos(),personality)
+        # ! THIS IS IMPORTANT
+        decision=await asyncio.to_thread(decide,message.content,context_kairos(),personality)
+        # ! And should fix double messages
         #waking up the bot 
         print("Decide if to make openfaust respond" ,decision)
         if decision == "0":
