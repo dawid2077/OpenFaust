@@ -30,26 +30,26 @@ client = OpenAI(
 def generate_answer_call(messages: list, nickname: str = "",user_id: int=0,messagecontent: str="",bot_id=1 ,bot_name=""):
     if messagecontent=="change_temperature00":
         response = client.chat.completions.create(
-            model="mistralai/mistral-small-2603",       
+            model="openai/gpt-4o-mini",       
             messages=messages,
             #in future here i will change temperature
             temperature=1,
             extra_body={
                 "provider": {
                     "allow_fallbacks": True,
-                    "order": ["mistral", "google","openai"]  
+                    "order": ["openai","azure"]
                 }
             }
         )
     else:    
         event=" "
         response = client.chat.completions.create(
-            model="mistralai/mistral-small-2603",       
+            model="openai/gpt-4o-mini",       
             messages=messages,
             extra_body={
                 "provider": {
                     "allow_fallbacks": True,
-                    "order": ["mistral", "google","openai"]  
+                    "order": ["openai","azure"]  
                 }
             }
         )
